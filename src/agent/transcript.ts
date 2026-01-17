@@ -161,6 +161,30 @@ export class TranscriptWriter {
   }
 
   /**
+   * Write a tool result message to the transcript.
+   * Tool results are user-role messages containing tool_result blocks.
+   */
+  async writeToolResultMessage(
+    sessionId: string,
+    content: ContentBlock[]
+  ): Promise<void> {
+    const entry: UserMessageEntry = {
+      type: 'user',
+      message: {
+        role: 'user',
+        content,
+      },
+      sessionId,
+      timestamp: new Date().toISOString(),
+      uuid: randomUUID(),
+      cwd: this.cwd,
+      version: this.version,
+    };
+
+    await this.appendEntry(sessionId, entry);
+  }
+
+  /**
    * Update the working directory (creates new transcript dir if needed).
    */
   setCwd(cwd: string): void {
@@ -216,6 +240,28 @@ export class TranscriptWriter {
           }
         } catch {
           // Skip malformed lines
+        }
+      }
+
+      // Validate: if last message is assistant with tool_use, check for matching tool_result
+      // If tool_result is missing, remove the incomplete assistant message to recover
+      if (messages.length >= 1) {
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg.role === 'assistant' && Array.isArray(lastMsg.content)) {
+          const toolUses = lastMsg.content.filter(
+            (block): block is ContentBlock & { type: 'tool_use' } =>
+              typeof block === 'object' && block !== null && 'type' in block && block.type === 'tool_use'
+          );
+
+          if (toolUses.length > 0) {
+            // Check if there's a following user message with tool_result
+            // If there isn't (this is the last message), the transcript is incomplete
+            console.warn(
+              `[TranscriptWriter] Transcript ${sessionId} ends with assistant tool_use without tool_result. ` +
+              `Removing incomplete message to recover.`
+            );
+            messages.pop();
+          }
         }
       }
 

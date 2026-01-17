@@ -438,6 +438,11 @@ export class AgentLoop {
             { role: 'user', content: toolResults },
           ];
 
+          // Write tool results to transcript (async, don't await)
+          this.transcriptWriter.writeToolResultMessage(sessionId, toolResults).catch((err) => {
+            console.error('[AgentLoop] Failed to write tool results to transcript:', err);
+          });
+
           // Persist conversation history after tool results
           this.conversationHistory = [...messages];
         }
