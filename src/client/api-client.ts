@@ -49,6 +49,7 @@ export class AnthropicClient {
 
   /**
    * Build the system prompt array, ensuring the required prefix comes first.
+   * Adds cache_control to system blocks for prompt caching optimization.
    */
   private buildSystemPrompt(system?: string | SystemBlock[]): SystemBlock[] {
     const result: SystemBlock[] = [
@@ -64,16 +65,24 @@ export class AnthropicClient {
     }
 
     if (typeof system === 'string') {
+      // Add cache_control to user's system prompt for caching
       result.push({
         type: 'text',
         text: system,
+        cache_control: { type: 'ephemeral' },
       });
     } else {
       // Filter out any duplicate prefix if caller accidentally included it
-      for (const block of system) {
-        if (block.text !== REQUIRED_SYSTEM_PREFIX) {
-          result.push(block);
-        }
+      // Add cache_control to the last block for optimal caching
+      const userBlocks = system.filter(block => block.text !== REQUIRED_SYSTEM_PREFIX);
+      for (let i = 0; i < userBlocks.length; i++) {
+        const block = userBlocks[i];
+        const isLast = i === userBlocks.length - 1;
+        result.push({
+          ...block,
+          // Add cache_control to the last block (most efficient caching point)
+          ...(isLast && !block.cache_control ? { cache_control: { type: 'ephemeral' } } : {}),
+        });
       }
     }
 

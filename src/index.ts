@@ -56,6 +56,10 @@ export {
   type RulesLoaderOptions,
   type LoadedRules,
 } from './agent/rules.js';
+export {
+  TranscriptWriter,
+  type TranscriptWriterOptions,
+} from './agent/transcript.js';
 
 // Tool exports
 export type {

@@ -16,6 +16,7 @@ import type {
 import { ToolRegistry } from '../tools/registry.js';
 import { toAPIToolDefinition, type ToolDefinition, type ToolContext, type ToolResultContent } from '../tools/types.js';
 import { HookRegistry } from './hooks.js';
+import { TranscriptWriter } from './transcript.js';
 import type { RunParams, AgentEvent, AccumulatedContent } from './types.js';
 
 export interface AgentLoopOptions extends AnthropicClientOptions {
@@ -23,6 +24,8 @@ export interface AgentLoopOptions extends AnthropicClientOptions {
   workingDir?: string;
   /** Default tool timeout in milliseconds */
   toolTimeout?: number;
+  /** Enable JSONL transcript writing (default: true) */
+  transcripts?: boolean;
 }
 
 export class AgentLoop {
@@ -30,6 +33,7 @@ export class AgentLoop {
   private toolRegistry: ToolRegistry;
   private defaultWorkingDir: string;
   private cancelled = false;
+  private transcriptWriter: TranscriptWriter;
 
   // Conversation state - persists across run() calls
   private conversationHistory: Message[] = [];
@@ -39,6 +43,10 @@ export class AgentLoop {
     this.client = new AnthropicClient(options);
     this.toolRegistry = new ToolRegistry({ defaultTimeout: options.toolTimeout });
     this.defaultWorkingDir = options.workingDir ?? process.cwd();
+    this.transcriptWriter = new TranscriptWriter({
+      cwd: this.defaultWorkingDir,
+      enabled: options.transcripts ?? true,
+    });
   }
 
   /**
@@ -123,6 +131,18 @@ export class AgentLoop {
       ? [...this.conversationHistory, ...newMessages]
       : [...newMessages];
     let turnNumber = 0;
+
+    // Update transcript writer cwd if different
+    this.transcriptWriter.setCwd(workingDir);
+
+    // Write new user messages to transcript (async, don't await)
+    for (const msg of newMessages) {
+      if (msg.role === 'user') {
+        this.transcriptWriter.writeUserMessage(sessionId, msg.content).catch((err) => {
+          console.error('[AgentLoop] Failed to write user message to transcript:', err);
+        });
+      }
+    }
     const totalUsage: Usage = {
       input_tokens: 0,
       output_tokens: 0,
@@ -229,6 +249,18 @@ export class AgentLoop {
           ...messages,
           { role: 'assistant', content: assistantContent },
         ];
+
+        // Write assistant message to transcript with usage data (async, don't await)
+        this.transcriptWriter.writeAssistantMessage(
+          sessionId,
+          model,
+          `msg_${randomUUID().replace(/-/g, '').slice(0, 24)}`,
+          assistantContent,
+          turnUsage,
+          stopReason,
+        ).catch((err) => {
+          console.error('[AgentLoop] Failed to write assistant message to transcript:', err);
+        });
 
         // Persist conversation history after each turn
         this.conversationHistory = [...messages];
@@ -437,17 +469,12 @@ export class AgentLoop {
         if (block.type === 'text') {
           accumulated[event.index] = { type: 'text', text: block.text };
         } else if (block.type === 'tool_use') {
+          // Start accumulating tool_use - don't yield yet, wait for complete input
           accumulated[event.index] = {
             type: 'tool_use',
             id: block.id,
             name: block.name,
             input: '',
-          };
-          return {
-            type: 'tool_use',
-            id: block.id,
-            name: block.name,
-            input: block.input,
           };
         } else if (block.type === 'thinking') {
           accumulated[event.index] = {
@@ -491,10 +518,25 @@ export class AgentLoop {
       }
 
       case 'content_block_stop': {
-        // Emit complete thinking block when it finishes
         const acc = accumulated[event.index];
+        // Emit complete thinking block when it finishes
         if (acc?.type === 'thinking' && acc.text) {
           return { type: 'thinking', content: acc.text };
+        }
+        // Emit complete tool_use block with full parsed input
+        if (acc?.type === 'tool_use' && acc.id && acc.name) {
+          let parsedInput: unknown;
+          try {
+            parsedInput = acc.input ? JSON.parse(acc.input) : {};
+          } catch {
+            parsedInput = {};
+          }
+          return {
+            type: 'tool_use',
+            id: acc.id,
+            name: acc.name,
+            input: parsedInput,
+          };
         }
         return null;
       }
