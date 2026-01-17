@@ -243,24 +243,45 @@ export class TranscriptWriter {
         }
       }
 
-      // Validate: if last message is assistant with tool_use, check for matching tool_result
-      // If tool_result is missing, remove the incomplete assistant message to recover
-      if (messages.length >= 1) {
-        const lastMsg = messages[messages.length - 1];
-        if (lastMsg.role === 'assistant' && Array.isArray(lastMsg.content)) {
-          const toolUses = lastMsg.content.filter(
+      // Validate conversation: each assistant tool_use must have a matching tool_result
+      // If any message has tool_use without matching tool_result in the next message, truncate there
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+          const toolUses = msg.content.filter(
             (block): block is ContentBlock & { type: 'tool_use' } =>
               typeof block === 'object' && block !== null && 'type' in block && block.type === 'tool_use'
           );
 
           if (toolUses.length > 0) {
-            // Check if there's a following user message with tool_result
-            // If there isn't (this is the last message), the transcript is incomplete
-            console.warn(
-              `[TranscriptWriter] Transcript ${sessionId} ends with assistant tool_use without tool_result. ` +
-              `Removing incomplete message to recover.`
+            // Check if next message has matching tool_results
+            const nextMsg = messages[i + 1];
+            if (!nextMsg || nextMsg.role !== 'user' || !Array.isArray(nextMsg.content)) {
+              // No matching tool_result - truncate conversation here
+              console.warn(
+                `[TranscriptWriter] Transcript ${sessionId} has tool_use at message ${i} without tool_result. ` +
+                `Truncating to recover.`
+              );
+              return messages.slice(0, i);
+            }
+
+            // Verify all tool_uses have matching tool_results
+            const resultIds = new Set(
+              nextMsg.content
+                .filter((b): b is ContentBlock & { type: 'tool_result' } =>
+                  typeof b === 'object' && b !== null && 'type' in b && b.type === 'tool_result' && 'tool_use_id' in b
+                )
+                .map(b => (b as { tool_use_id: string }).tool_use_id)
             );
-            messages.pop();
+
+            const missingResults = toolUses.filter(t => !resultIds.has(t.id));
+            if (missingResults.length > 0) {
+              console.warn(
+                `[TranscriptWriter] Transcript ${sessionId} has ${missingResults.length} tool_use without matching tool_result at message ${i}. ` +
+                `Truncating to recover.`
+              );
+              return messages.slice(0, i);
+            }
           }
         }
       }
