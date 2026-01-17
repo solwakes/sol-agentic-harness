@@ -22,10 +22,16 @@ export interface SubscriptionInfo {
   scopes: string[];
 }
 
+// Cache control for prompt caching
+export interface CacheControl {
+  type: 'ephemeral';
+}
+
 // API message types
 export interface TextContent {
   type: 'text';
   text: string;
+  cache_control?: CacheControl;
 }
 
 export interface ImageContent {
@@ -35,6 +41,7 @@ export interface ImageContent {
     media_type: string;
     data: string;
   };
+  cache_control?: CacheControl;
 }
 
 export interface ToolUseContent {
@@ -42,6 +49,7 @@ export interface ToolUseContent {
   id: string;
   name: string;
   input: unknown;
+  cache_control?: CacheControl;
 }
 
 export interface ToolResultContent {
@@ -49,12 +57,14 @@ export interface ToolResultContent {
   tool_use_id: string;
   content: string | ContentBlock[];
   is_error?: boolean;
+  cache_control?: CacheControl;
 }
 
 export interface ThinkingContent {
   type: 'thinking';
   thinking: string;
   signature?: string; // Required when sending thinking blocks back to API
+  // Note: thinking blocks cannot have cache_control directly per Anthropic docs
 }
 
 export type ContentBlock =

@@ -45,6 +45,8 @@ export interface HookResult {
   reason?: string;
   /** Modified input (for PreToolUse) */
   modified?: unknown;
+  /** Content to append to tool result (for PostToolUse) */
+  appendToResult?: string;
 }
 
 export interface Hook<E extends HookEvent = HookEvent> {
@@ -84,6 +86,7 @@ export class HookRegistry {
 
     let currentInput = input;
     const reasons: string[] = [];
+    const appendParts: string[] = [];
 
     for (const hook of eventHooks) {
       try {
@@ -107,6 +110,11 @@ export class HookRegistry {
         if (result.reason) {
           reasons.push(result.reason);
         }
+        
+        // Collect appendToResult from PostToolUse hooks
+        if (event === 'PostToolUse' && result.appendToResult) {
+          appendParts.push(result.appendToResult);
+        }
       } catch (error) {
         // Hook error - log and continue (don't block on hook errors)
         console.error(`Hook error for ${event}:`, error);
@@ -117,6 +125,7 @@ export class HookRegistry {
       allow: true,
       reason: reasons.length > 0 ? reasons.join('; ') : undefined,
       modified: event === 'PreToolUse' ? (currentInput as PreToolUseInput).input : undefined,
+      appendToResult: appendParts.length > 0 ? appendParts.join('\n') : undefined,
     };
   }
 

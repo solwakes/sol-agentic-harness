@@ -7,6 +7,9 @@ import {
   type MessageParams,
   type StreamEvent,
   type SystemBlock,
+  type Message,
+  type ContentBlock,
+  type CacheControl,
   APIError,
   RateLimitError,
   AuthenticationError,
@@ -90,6 +93,61 @@ export class AnthropicClient {
   }
 
   /**
+   * Inject cache breakpoints into message history for prompt caching.
+   * 
+   * Strategy: Add cache_control to the last content block of the second-to-last
+   * user message. This caches all conversation history up to that point,
+   * so only the most recent exchange needs to be processed fresh.
+   * 
+   * Per Anthropic docs:
+   * - Cache prefixes are created in order: tools, system, then messages
+   * - The system checks backwards up to 20 blocks from breakpoint
+   * - Minimum cacheable length: 4096 tokens (Opus 4.5), 1024 tokens (Sonnet/others)
+   */
+  private injectCacheBreakpoints(messages: Message[]): Message[] {
+    if (messages.length < 3) {
+      // Not enough messages to benefit from caching
+      return messages;
+    }
+
+    // Deep clone to avoid mutating the original
+    const result = messages.map(msg => ({
+      ...msg,
+      content: typeof msg.content === 'string'
+        ? msg.content
+        : msg.content.map(block => ({ ...block }))
+    }));
+
+    // Find the second-to-last user message (the one before the current turn)
+    let userMessageCount = 0;
+    let targetIndex = -1;
+    
+    for (let i = result.length - 1; i >= 0; i--) {
+      if (result[i].role === 'user') {
+        userMessageCount++;
+        if (userMessageCount === 2) {
+          targetIndex = i;
+          break;
+        }
+      }
+    }
+
+    // If we found a target, add cache_control to its last content block
+    if (targetIndex >= 0) {
+      const msg = result[targetIndex];
+      if (Array.isArray(msg.content) && msg.content.length > 0) {
+        const lastBlock = msg.content[msg.content.length - 1];
+        // Don't add to thinking blocks (per docs, they can't have cache_control)
+        if (lastBlock.type !== 'thinking') {
+          (lastBlock as ContentBlock & { cache_control?: CacheControl }).cache_control = { type: 'ephemeral' };
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Build request headers.
    */
   private async buildHeaders(forceRefresh = false): Promise<Record<string, string>> {
@@ -142,9 +200,13 @@ export class AnthropicClient {
    * Stream a message request, yielding events as they arrive.
    */
   async *streamMessage(params: MessageParams): AsyncGenerator<StreamEvent> {
+    // Inject cache breakpoints into messages for prompt caching
+    const messagesWithCache = this.injectCacheBreakpoints(params.messages);
+
     // Build request body
     const body = {
       ...params,
+      messages: messagesWithCache,
       system: this.buildSystemPrompt(params.system),
       stream: true,
     };

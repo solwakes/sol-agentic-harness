@@ -393,24 +393,29 @@ export class AgentLoop {
               };
 
               // Format content for API - convert ToolResultContent to string if needed
-              const apiContent =
+              let apiContent =
                 typeof result.content === 'string'
                   ? result.content
                   : this.toolResultContentToString(result.content);
+
+              // Run post-hook - allows appending content to result
+              const hookResult = await hooks.run('PostToolUse', {
+                tool: toolUse.name!,
+                input: effectiveInput,
+                result: result.content,
+                is_error: result.is_error ?? false,
+              });
+              
+              // If hook returned content to append, add it to the tool result
+              if (hookResult.appendToResult) {
+                apiContent += '\n\n' + hookResult.appendToResult;
+              }
 
               toolResults.push({
                 type: 'tool_result',
                 tool_use_id: toolUse.id!,
                 content: apiContent,
                 is_error: result.is_error,
-              });
-
-              // Run post-hook
-              await hooks.run('PostToolUse', {
-                tool: toolUse.name!,
-                input: effectiveInput,
-                result: result.content,
-                is_error: result.is_error ?? false,
               });
             } catch (error) {
               const errorMessage = `Error: ${(error as Error).message}`;
