@@ -1,16 +1,16 @@
 /**
- * JSONL Transcript Writer
+ * JSONL Transcript Writer/Reader
  *
- * Writes conversation transcripts in the format compatible with Claude SDK / ccusage.
+ * Writes and reads conversation transcripts in the format compatible with Claude SDK / ccusage.
  * Transcripts are stored in ~/.claude/projects/{project-dir}/{sessionId}.jsonl
  */
 
-import { appendFile, mkdir } from 'fs/promises';
+import { appendFile, mkdir, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
-import type { Message, Usage } from '../client/types.js';
+import type { Message, ContentBlock, Usage } from '../client/types.js';
 
 // Get project directory from cwd, converting slashes to dashes
 function getProjectDir(cwd: string): string {
@@ -175,5 +175,69 @@ export class TranscriptWriter {
    */
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
+  }
+
+  /**
+   * Load conversation history from a transcript file.
+   * Returns messages in the format needed for AgentLoop.
+   */
+  async loadTranscript(sessionId: string): Promise<Message[]> {
+    const path = getTranscriptPath(sessionId, this.cwd);
+
+    if (!existsSync(path)) {
+      return [];
+    }
+
+    try {
+      const content = await readFile(path, 'utf-8');
+      const lines = content.trim().split('\n').filter(line => line.trim());
+      const messages: Message[] = [];
+
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line) as { type: string; message?: unknown };
+
+          if (entry.type === 'user' && entry.message) {
+            const msg = entry.message as { role: string; content: Message['content'] };
+            if (msg.role === 'user') {
+              messages.push({
+                role: 'user',
+                content: msg.content,
+              });
+            }
+          } else if (entry.type === 'assistant' && entry.message) {
+            const msg = entry.message as { role: string; content: ContentBlock[] };
+            if (msg.role === 'assistant') {
+              messages.push({
+                role: 'assistant',
+                content: msg.content,
+              });
+            }
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+
+      return messages;
+    } catch (error) {
+      console.error(`[TranscriptWriter] Failed to load transcript ${sessionId}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Check if a transcript exists for a session.
+   */
+  transcriptExists(sessionId: string): boolean {
+    const path = getTranscriptPath(sessionId, this.cwd);
+    return existsSync(path);
+  }
+
+  /**
+   * Get the transcript file path for a session.
+   */
+  getTranscriptPath(sessionId: string): string {
+    return getTranscriptPath(sessionId, this.cwd);
   }
 }

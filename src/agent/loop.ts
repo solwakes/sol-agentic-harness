@@ -79,6 +79,34 @@ export class AgentLoop {
   }
 
   /**
+   * Load a session from a transcript file.
+   * Restores conversation history and session ID for continuity across restarts.
+   */
+  async loadSession(sessionId: string, workingDir?: string): Promise<boolean> {
+    const cwd = workingDir ?? this.defaultWorkingDir;
+    this.transcriptWriter.setCwd(cwd);
+
+    const messages = await this.transcriptWriter.loadTranscript(sessionId);
+    if (messages.length === 0) {
+      return false;
+    }
+
+    this.conversationHistory = messages;
+    this.currentSessionId = sessionId;
+    console.log(`[AgentLoop] Loaded session ${sessionId} with ${messages.length} messages`);
+    return true;
+  }
+
+  /**
+   * Check if a transcript exists for a session.
+   */
+  hasTranscript(sessionId: string, workingDir?: string): boolean {
+    const cwd = workingDir ?? this.defaultWorkingDir;
+    this.transcriptWriter.setCwd(cwd);
+    return this.transcriptWriter.transcriptExists(sessionId);
+  }
+
+  /**
    * Run the agent loop.
    *
    * If the loop has existing conversation history, new messages are appended to it.
