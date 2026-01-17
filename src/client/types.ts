@@ -67,12 +67,59 @@ export interface ThinkingContent {
   // Note: thinking blocks cannot have cache_control directly per Anthropic docs
 }
 
+// Server-side tool use (like web_search) - executed by Anthropic, not us
+export interface ServerToolUseContent {
+  type: 'server_tool_use';
+  id: string;
+  name: string;
+  input: unknown;
+}
+
+// Web search result from server
+export interface WebSearchResult {
+  type: 'web_search_result';
+  url: string;
+  title: string;
+  encrypted_content: string;
+  page_age?: string;
+}
+
+// Web search tool result error
+export interface WebSearchToolResultError {
+  type: 'web_search_tool_result_error';
+  error_code: 'too_many_requests' | 'invalid_input' | 'max_uses_exceeded' | 'query_too_long' | 'unavailable';
+}
+
+// Web search tool result content block
+export interface WebSearchToolResultContent {
+  type: 'web_search_tool_result';
+  tool_use_id: string;
+  content: WebSearchResult[] | WebSearchToolResultError;
+}
+
+// Citation for web search results
+export interface WebSearchCitation {
+  type: 'web_search_result_location';
+  url: string;
+  title: string;
+  encrypted_index: string;
+  cited_text: string;
+}
+
+// Text content with optional citations
+export interface TextContentWithCitations extends TextContent {
+  citations?: WebSearchCitation[];
+}
+
 export type ContentBlock =
   | TextContent
+  | TextContentWithCitations
   | ImageContent
   | ToolUseContent
   | ToolResultContent
-  | ThinkingContent;
+  | ThinkingContent
+  | ServerToolUseContent
+  | WebSearchToolResultContent;
 
 export interface Message {
   role: 'user' | 'assistant';
@@ -91,6 +138,25 @@ export interface ToolDefinitionAPI {
   input_schema: Record<string, unknown>;
 }
 
+// Web search tool definition (server-side tool)
+export interface WebSearchToolDefinition {
+  type: 'web_search_20250305';
+  name: 'web_search';
+  max_uses?: number;
+  allowed_domains?: string[];
+  blocked_domains?: string[];
+  user_location?: {
+    type: 'approximate';
+    city?: string;
+    region?: string;
+    country?: string;
+    timezone?: string;
+  };
+}
+
+// Union of all tool types that can be passed to the API
+export type APIToolInput = ToolDefinitionAPI | WebSearchToolDefinition;
+
 export interface ThinkingConfig {
   type: 'enabled';
   budget_tokens: number;
@@ -101,7 +167,7 @@ export interface MessageParams {
   messages: Message[];
   max_tokens: number;
   system?: string | SystemBlock[];
-  tools?: ToolDefinitionAPI[];
+  tools?: APIToolInput[];
   thinking?: ThinkingConfig;
   temperature?: number;
   stream?: boolean;
@@ -145,9 +211,11 @@ export interface ContentBlockStartEvent {
   type: 'content_block_start';
   index: number;
   content_block:
-    | { type: 'text'; text: string }
+    | { type: 'text'; text: string; citations?: WebSearchCitation[] }
     | { type: 'tool_use'; id: string; name: string; input: unknown }
-    | { type: 'thinking'; thinking: string; signature?: string };
+    | { type: 'thinking'; thinking: string; signature?: string }
+    | { type: 'server_tool_use'; id: string; name: string; input?: unknown }
+    | { type: 'web_search_tool_result'; tool_use_id: string; content: WebSearchResult[] | WebSearchToolResultError };
 }
 
 export interface ContentBlockDeltaEvent {

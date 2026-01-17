@@ -15,6 +15,7 @@ import type {
 } from '../client/types.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { toAPIToolDefinition, type ToolDefinition, type ToolContext, type ToolResultContent } from '../tools/types.js';
+import { getWebSearchAPITool } from '../tools/builtin/web-search.js';
 import { HookRegistry } from './hooks.js';
 import { TranscriptWriter } from './transcript.js';
 import type { RunParams, AgentEvent, AccumulatedContent } from './types.js';
@@ -193,7 +194,12 @@ export class AgentLoop {
 
       try {
         // Build API request
-        const apiTools = toolRegistry.getAll().map(toAPIToolDefinition);
+        // Include both regular tools and server-side tools (like web_search)
+        const regularTools = toolRegistry.getAll().map(toAPIToolDefinition);
+        const apiTools = [
+          ...regularTools,
+          getWebSearchAPITool(), // Add web search server-side tool
+        ];
         const thinkingConfig: ThinkingConfig | undefined = thinking.enabled
           ? { type: 'enabled', budget_tokens: thinking.budgetTokens ?? 10000 }
           : undefined;
@@ -505,7 +511,11 @@ export class AgentLoop {
         const block = event.content_block;
 
         if (block.type === 'text') {
-          accumulated[event.index] = { type: 'text', text: block.text };
+          accumulated[event.index] = { 
+            type: 'text', 
+            text: block.text,
+            citations: block.citations,
+          };
         } else if (block.type === 'tool_use') {
           // Start accumulating tool_use - don't yield yet, wait for complete input
           accumulated[event.index] = {
@@ -519,6 +529,34 @@ export class AgentLoop {
             type: 'thinking',
             text: block.thinking,
             signature: block.signature,  // Capture signature for API round-trip
+          };
+        } else if (block.type === 'server_tool_use') {
+          // Server-side tool (like web_search) - executed by Anthropic
+          accumulated[event.index] = {
+            type: 'server_tool_use',
+            id: block.id,
+            name: block.name,
+            input: typeof block.input === 'string' ? block.input : JSON.stringify(block.input ?? {}),
+          };
+          // Yield immediately since we have the input
+          return {
+            type: 'server_tool_use',
+            id: block.id,
+            name: block.name,
+            input: block.input,
+          };
+        } else if (block.type === 'web_search_tool_result') {
+          // Web search results from server
+          accumulated[event.index] = {
+            type: 'web_search_tool_result',
+            tool_use_id: block.tool_use_id,
+            searchResults: block.content,
+          };
+          // Yield the results
+          return {
+            type: 'web_search_result',
+            tool_use_id: block.tool_use_id,
+            results: block.content,
           };
         }
         return null;
@@ -607,7 +645,12 @@ export class AgentLoop {
           };
         }
         if (c.type === 'text') {
-          return { type: 'text', text: c.text ?? '' };
+          // Include citations if present
+          const textBlock: ContentBlock = { type: 'text', text: c.text ?? '' };
+          if (c.citations && c.citations.length > 0) {
+            (textBlock as ContentBlock & { citations?: unknown[] }).citations = c.citations;
+          }
+          return textBlock;
         }
         if (c.type === 'tool_use') {
           let parsedInput: unknown;
@@ -622,6 +665,29 @@ export class AgentLoop {
             name: c.name ?? '',
             input: parsedInput,
           };
+        }
+        if (c.type === 'server_tool_use') {
+          // Server-side tool use - pass through as-is
+          let parsedInput: unknown;
+          try {
+            parsedInput = c.input ? JSON.parse(c.input) : {};
+          } catch {
+            parsedInput = {};
+          }
+          return {
+            type: 'server_tool_use',
+            id: c.id ?? '',
+            name: c.name ?? '',
+            input: parsedInput,
+          } as ContentBlock;
+        }
+        if (c.type === 'web_search_tool_result') {
+          // Web search results - pass through as-is
+          return {
+            type: 'web_search_tool_result',
+            tool_use_id: c.tool_use_id ?? '',
+            content: c.searchResults ?? [],
+          } as ContentBlock;
         }
         return { type: 'text', text: '' };
       });

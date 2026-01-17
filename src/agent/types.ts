@@ -2,7 +2,7 @@
  * Agent loop type definitions.
  */
 
-import type { Message, SystemBlock, Usage } from '../client/types.js';
+import type { Message, SystemBlock, Usage, WebSearchResult, WebSearchToolResultError, WebSearchCitation } from '../client/types.js';
 import type { ToolResultContent } from '../tools/types.js';
 import type { ToolDefinition } from '../tools/types.js';
 import type { HookRegistry } from './hooks.js';
@@ -76,6 +76,19 @@ export interface ToolResultEvent {
   is_error: boolean;
 }
 
+export interface ServerToolUseEvent {
+  type: 'server_tool_use';
+  id: string;
+  name: string;
+  input: unknown;
+}
+
+export interface WebSearchResultEvent {
+  type: 'web_search_result';
+  tool_use_id: string;
+  results: WebSearchResult[] | WebSearchToolResultError;
+}
+
 export interface TurnCompleteEvent {
   type: 'turn_complete';
   usage: Usage;
@@ -108,6 +121,8 @@ export type AgentEvent =
   | TextEvent
   | ToolUseEvent
   | ToolResultEvent
+  | ServerToolUseEvent
+  | WebSearchResultEvent
   | TurnCompleteEvent
   | DoneEvent
   | ErrorEvent
@@ -115,10 +130,13 @@ export type AgentEvent =
 
 // Accumulated message content during streaming
 export interface AccumulatedContent {
-  type: 'text' | 'tool_use' | 'thinking';
+  type: 'text' | 'tool_use' | 'thinking' | 'server_tool_use' | 'web_search_tool_result';
   text?: string;
   id?: string;
   name?: string;
   input?: string; // JSON string, parsed later
   signature?: string; // Required for thinking blocks when sending back to API
+  citations?: WebSearchCitation[]; // For text blocks with citations
+  tool_use_id?: string; // For web_search_tool_result
+  searchResults?: WebSearchResult[] | WebSearchToolResultError; // For web_search_tool_result
 }

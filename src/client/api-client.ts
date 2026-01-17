@@ -27,6 +27,7 @@ const ANTHROPIC_BETA_FEATURES = [
   'oauth-2025-04-20',
   'interleaved-thinking-2025-05-14',
   'fine-grained-tool-streaming-2025-05-14',
+  'web-search-2025-03-05',
 ];
 
 // Required system prompt prefix for subscription auth
