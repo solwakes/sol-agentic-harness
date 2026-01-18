@@ -66,6 +66,24 @@ export interface AssistantMessageEntry {
 }
 
 /**
+ * Truncation info returned when a transcript is cut short due to incomplete tool calls.
+ */
+export interface TruncationInfo {
+  truncated: boolean;
+  truncatedAtMessage?: number;
+  incompleteToolCalls?: Array<{ name: string; id: string; input: unknown }>;
+  reason?: string;
+}
+
+/**
+ * Result of loading a transcript, including any truncation info.
+ */
+export interface LoadTranscriptResult {
+  messages: Message[];
+  truncation: TruncationInfo;
+}
+
+/**
  * Transcript writer for JSONL format compatible with Claude SDK.
  */
 export class TranscriptWriter {
@@ -203,13 +221,13 @@ export class TranscriptWriter {
 
   /**
    * Load conversation history from a transcript file.
-   * Returns messages in the format needed for AgentLoop.
+   * Returns messages in the format needed for AgentLoop, plus truncation info.
    */
-  async loadTranscript(sessionId: string): Promise<Message[]> {
+  async loadTranscript(sessionId: string): Promise<LoadTranscriptResult> {
     const path = getTranscriptPath(sessionId, this.cwd);
 
     if (!existsSync(path)) {
-      return [];
+      return { messages: [], truncation: { truncated: false } };
     }
 
     try {
@@ -262,7 +280,15 @@ export class TranscriptWriter {
                 `[TranscriptWriter] Transcript ${sessionId} has tool_use at message ${i} without tool_result. ` +
                 `Truncating to recover.`
               );
-              return messages.slice(0, i);
+              return {
+                messages: messages.slice(0, i),
+                truncation: {
+                  truncated: true,
+                  truncatedAtMessage: i,
+                  incompleteToolCalls: toolUses.map(t => ({ name: t.name, id: t.id, input: t.input })),
+                  reason: 'No tool_result found after tool_use',
+                },
+              };
             }
 
             // Verify all tool_uses have matching tool_results
@@ -280,16 +306,24 @@ export class TranscriptWriter {
                 `[TranscriptWriter] Transcript ${sessionId} has ${missingResults.length} tool_use without matching tool_result at message ${i}. ` +
                 `Truncating to recover.`
               );
-              return messages.slice(0, i);
+              return {
+                messages: messages.slice(0, i),
+                truncation: {
+                  truncated: true,
+                  truncatedAtMessage: i,
+                  incompleteToolCalls: missingResults.map(t => ({ name: t.name, id: t.id, input: t.input })),
+                  reason: 'Missing tool_result for some tool_use calls',
+                },
+              };
             }
           }
         }
       }
 
-      return messages;
+      return { messages, truncation: { truncated: false } };
     } catch (error) {
       console.error(`[TranscriptWriter] Failed to load transcript ${sessionId}:`, error);
-      return [];
+      return { messages: [], truncation: { truncated: false } };
     }
   }
 

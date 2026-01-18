@@ -17,7 +17,7 @@ import { ToolRegistry } from '../tools/registry.js';
 import { toAPIToolDefinition, type ToolDefinition, type ToolContext, type ToolResultContent } from '../tools/types.js';
 import { getWebSearchAPITool } from '../tools/builtin/web-search.js';
 import { HookRegistry } from './hooks.js';
-import { TranscriptWriter } from './transcript.js';
+import { TranscriptWriter, type TruncationInfo } from './transcript.js';
 import type { RunParams, AgentEvent, AccumulatedContent } from './types.js';
 
 export interface AgentLoopOptions extends AnthropicClientOptions {
@@ -27,6 +27,15 @@ export interface AgentLoopOptions extends AnthropicClientOptions {
   toolTimeout?: number;
   /** Enable JSONL transcript writing (default: true) */
   transcripts?: boolean;
+}
+
+/**
+ * Result of loading a session, including any truncation info.
+ */
+export interface LoadSessionResult {
+  loaded: boolean;
+  messageCount: number;
+  truncation: TruncationInfo;
 }
 
 export class AgentLoop {
@@ -82,20 +91,30 @@ export class AgentLoop {
   /**
    * Load a session from a transcript file.
    * Restores conversation history and session ID for continuity across restarts.
+   * Returns info about whether the session was loaded and any truncation that occurred.
    */
-  async loadSession(sessionId: string, workingDir?: string): Promise<boolean> {
+  async loadSession(sessionId: string, workingDir?: string): Promise<LoadSessionResult> {
     const cwd = workingDir ?? this.defaultWorkingDir;
     this.transcriptWriter.setCwd(cwd);
 
-    const messages = await this.transcriptWriter.loadTranscript(sessionId);
-    if (messages.length === 0) {
-      return false;
+    const result = await this.transcriptWriter.loadTranscript(sessionId);
+    if (result.messages.length === 0) {
+      return { loaded: false, messageCount: 0, truncation: { truncated: false } };
     }
 
-    this.conversationHistory = messages;
+    this.conversationHistory = result.messages;
     this.currentSessionId = sessionId;
-    console.log(`[AgentLoop] Loaded session ${sessionId} with ${messages.length} messages`);
-    return true;
+    console.log(`[AgentLoop] Loaded session ${sessionId} with ${result.messages.length} messages`);
+    
+    if (result.truncation.truncated) {
+      console.warn(`[AgentLoop] Session was truncated: ${result.truncation.reason}`);
+    }
+    
+    return {
+      loaded: true,
+      messageCount: result.messages.length,
+      truncation: result.truncation,
+    };
   }
 
   /**

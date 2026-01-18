@@ -25,7 +25,7 @@ export type {
 } from './client/types.js';
 
 // Agent exports
-export { AgentLoop, type AgentLoopOptions } from './agent/loop.js';
+export { AgentLoop, type AgentLoopOptions, type LoadSessionResult } from './agent/loop.js';
 export type {
   RunParams,
   ThinkingConfig,
@@ -59,6 +59,8 @@ export {
 export {
   TranscriptWriter,
   type TranscriptWriterOptions,
+  type TruncationInfo,
+  type LoadTranscriptResult,
 } from './agent/transcript.js';
 
 // Tool exports
